@@ -17,7 +17,7 @@
     <ProjectGuid>{9D9A9BD1-AFBA-47E4-9D4A-F30486A598B7}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>harbor</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">

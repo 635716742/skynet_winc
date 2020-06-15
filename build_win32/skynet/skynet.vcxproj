@@ -18,7 +18,7 @@
     <ProjectGuid>{05DA04C2-ECEF-445E-9A32-249F0E3BF7FB}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>skynet</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.17763.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
