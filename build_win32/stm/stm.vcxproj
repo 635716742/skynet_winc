@@ -68,7 +68,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>E:\boost\boost_1_73_0\stage\lib;$(OutDir)..</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\..\third_lib\boost\;$(OutDir)..</AdditionalLibraryDirectories>
       <AdditionalDependencies>sncore.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
     </Link>

@@ -35,6 +35,5 @@ typedef boost::detail::spinlock SpinLock;
 struct SNContext;
 typedef std::shared_ptr<SNContext> SNContextPtr;
 typedef std::weak_ptr<SNContext> SNContextWeakPtr;
-std::shared_mutex
 
 #endif
