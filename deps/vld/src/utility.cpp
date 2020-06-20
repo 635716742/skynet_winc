@@ -26,10 +26,15 @@
 #include "utility.h"    // Provides various utility functions and macros.
 #include "vldheap.h"    // Provides internal new and delete operators.
 #include "vldint.h"
+#include <tchar.h>
+#include <string.h>
+
+//#define PRINTHOOKINFO
 
 // Imported Global Variables
-extern CriticalSection  g_imageLock;
 extern ReportHookSet*   g_pReportHooks;
+extern VisualLeakDetector g_vld;
+extern ImageDirectoryEntries g_Ide;
 
 // Global variables.
 static BOOL         s_reportDelay = FALSE;     // If TRUE, we sleep for a bit after calling OutputDebugString to give the debugger time to catch up.
@@ -37,6 +42,8 @@ static FILE        *s_reportFile = NULL;       // Pointer to the file, if any, t
 static BOOL         s_reportToDebugger = TRUE; // If TRUE, a copy of the memory leak report will be sent to the debugger for display.
 static BOOL         s_reportToStdOut = TRUE;   // If TRUE, a copy of the memory leak report will be sent to standard output.
 static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory leak report.
+
+#define IS_ORDINAL(name) (((UINT_PTR)name & 0xFFFF) == ((UINT_PTR)name))
 
 // DumpMemoryA - Dumps a nicely formatted rendition of a region of memory.
 //   Includes both the hex value of each byte and its ASCII equivalent (if
@@ -183,10 +190,10 @@ VOID DumpMemoryW (LPCVOID address, SIZE_T size)
 }
 
 // FilterFunction - Used in structured exception handling
-DWORD FilterFunction(long) 
-{ 
+DWORD FilterFunction(long)
+{
     return EXCEPTION_CONTINUE_SEARCH;
-} 
+}
 
 // FindOriginalImportDescriptor - Determines if the specified module imports the named import
 //   from the named exporting module.
@@ -211,17 +218,11 @@ IMAGE_IMPORT_DESCRIPTOR* FindOriginalImportDescriptor (HMODULE importmodule, LPC
     // exporting module. The importing module actually can have several IATs --
     // one for each export module that it imports something from. The IDT entry
     // gives us the offset of the IAT for the module we are interested in.
-    g_imageLock.Enter();
-    __try
     {
-        idte = (IMAGE_IMPORT_DESCRIPTOR*)ImageDirectoryEntryToDataEx((PVOID)importmodule, TRUE,
+        idte = (IMAGE_IMPORT_DESCRIPTOR*)g_Ide.ImageDirectoryEntryToDataEx((PVOID)GetCallingModule((UINT_PTR)importmodule), TRUE,
             IMAGE_DIRECTORY_ENTRY_IMPORT, &size, &section);
     }
-    __except(FilterFunction(GetExceptionCode()))
-    {
-        idte = NULL;
-    }
-    g_imageLock.Leave();
+
     if (idte == NULL) {
         // This module has no IDT (i.e. it imports nothing).
         return NULL;
@@ -273,7 +274,7 @@ BOOL FindImport (HMODULE importmodule, HMODULE exportmodule, LPCSTR exportmodule
     idte = FindOriginalImportDescriptor(importmodule, exportmodulename);
     if (idte == NULL)
         return FALSE;
-    
+
     // Get the *real* address of the import. If we find this address in the IAT,
     // then we've found that the module does import the named import.
     import = GetProcAddress(exportmodule, importname);
@@ -414,7 +415,7 @@ BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT ta
     for (UINT index = 0; index < tablesize; index++) {
         moduleentry_t *entry = &patchtable[index];
         found = FindPatch(importmodule, entry);
-        if (found == TRUE) {
+        if (found) {
             // Found one of the listed patches installed in the import module.
             return TRUE;
         }
@@ -422,6 +423,37 @@ BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT ta
 
     // No patches listed in the patch table were found in the import module.
     return FALSE;
+}
+
+LPVOID FindRealCode(LPVOID pCode)
+{
+    LPVOID result = pCode;
+    if (pCode != NULL)
+    {
+        if (*(WORD *)pCode == 0x25ff) // JMP r/m32
+        {
+#ifdef _WIN64
+            LONG offset = *((LONG *)((ULONG_PTR)pCode + 2));
+            // RIP relative addressing
+            PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 6);
+            pCode = *(LPVOID*)(pNextInst + offset);
+            return pCode;
+#else
+            DWORD addr = *((DWORD *)((ULONG_PTR)pCode + 2));
+            pCode = *(LPVOID*)(addr);
+            return FindRealCode(pCode);
+#endif
+        }
+        if (*(BYTE *)pCode == 0xE9) // JMP rel32
+        {
+            // Relative next instruction
+            PBYTE	pNextInst = (PBYTE)((ULONG_PTR)pCode + 5);
+            LONG	offset = *((LONG *)((ULONG_PTR)pCode + 1));
+            pCode = (LPVOID*)(pNextInst + offset);
+            return FindRealCode(pCode);
+        }
+    }
+    return result;
 }
 
 // PatchImport - Patches all future calls to an imported function, or references
@@ -454,90 +486,135 @@ BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT ta
 //    import module does not import the specified export, so nothing changed,
 //    then FALSE will be returned.
 //
-BOOL PatchImport (HMODULE importmodule, moduleentry_t *module)
+BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
 {
-    HMODULE exportmodule = (HMODULE)module->moduleBase;
+    HMODULE exportmodule = (HMODULE)patchModule->moduleBase;
     if (exportmodule == NULL)
         return FALSE;
 
-    IMAGE_IMPORT_DESCRIPTOR *idte;
-    IMAGE_SECTION_HEADER    *section;
-    ULONG                    size;
+    IMAGE_IMPORT_DESCRIPTOR *idte = NULL;
+    IMAGE_SECTION_HEADER    *section = NULL;
+    ULONG                    size = 0;
 
     // Locate the importing module's Import Directory Table (IDT) entry for the
     // exporting module. The importing module actually can have several IATs --
     // one for each export module that it imports something from. The IDT entry
     // gives us the offset of the IAT for the module we are interested in.
-    g_imageLock.Enter();
-    __try
     {
-        idte = (IMAGE_IMPORT_DESCRIPTOR*)ImageDirectoryEntryToDataEx((PVOID)importmodule, TRUE,
+        idte = (IMAGE_IMPORT_DESCRIPTOR*)g_Ide.ImageDirectoryEntryToDataEx((PVOID)GetCallingModule((UINT_PTR)importmodule), TRUE,
             IMAGE_DIRECTORY_ENTRY_IMPORT, &size, &section);
     }
-    __except(FilterFunction(GetExceptionCode()))
-    {
-        idte = NULL;
-    }
-    g_imageLock.Leave();
+
     if (idte == NULL) {
         // This module has no IDT (i.e. it imports nothing).
         return FALSE;
     }
+#ifdef PRINTHOOKINFO
+	bool dllNamePrinted = false;
+	CHAR  cwBuffer[2048] = { 0 };
+	LPSTR pszBuffer = cwBuffer;
+	DWORD dwMaxChars = _countof(cwBuffer);
+	DWORD dwLength = ::GetModuleFileNameA(importmodule, pszBuffer, dwMaxChars);
+#endif
 
     int result = 0;
     while (idte->FirstThunk != 0x0) {
-        PCHAR name = (PCHAR)R2VA(importmodule, idte->Name);
-        UNREFERENCED_PARAMETER(name);
+        PCHAR importdllname = (PCHAR)R2VA(importmodule, idte->Name);
+        UNREFERENCED_PARAMETER(importdllname);
 
-        patchentry_t *entry = module->patchTable;
+        patchentry_t *patchEntry = patchModule->patchTable;
         int i = 0;
-        while(entry->importName)
+        while(patchEntry->importName)
         {
-            LPCSTR importname   = entry->importName;
-            LPCVOID replacement = entry->replacement;
+            LPCSTR importname   = patchEntry->importName;
+            LPCVOID replacement = patchEntry->replacement;
 
             // Get the *real* address of the import. If we find this address in the IAT,
             // then we've found the entry that needs to be patched.
-            FARPROC import2 = VisualLeakDetector::_RGetProcAddress(exportmodule, importname);
-            FARPROC import = GetProcAddress(exportmodule, importname);
-            if ( import2 )
-                import = import2;
+            LPVOID import = VisualLeakDetector::_RGetProcAddress(exportmodule, importname);
+            if ( !import)
+                import = GetProcAddress(exportmodule, importname);
+            import = FindRealCode(import);
 
             if (import == NULL) // Perhaps the named export module does not actually export the named import?
             {
-                entry++; i++;
+                patchEntry++; i++;
                 continue;
             }
 
             // Locate the import's IAT entry.
-            IMAGE_THUNK_DATA *iate = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->FirstThunk);
-            while (iate->u1.Function != 0x0)
+            IMAGE_THUNK_DATA *thunk = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->FirstThunk);
+            IMAGE_THUNK_DATA *origThunk = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->OriginalFirstThunk);
+            for (; origThunk->u1.Function != NULL;
+                origThunk++, thunk++)
             {
-                if (iate->u1.Function != (DWORD_PTR)import) 
+                LPVOID func = FindRealCode((LPVOID)thunk->u1.Function);
+                if (((DWORD_PTR)func == (DWORD_PTR)import))
                 {
-                    iate++;
-                    continue;
-                }
+                    // Found the IAT entry. Overwrite the address stored in the IAT
+                    // entry with the address of the replacement. Note that the IAT
+                    // entry may be write-protected, so we must first ensure that it is
+                    // writable.
+                    if (import != replacement)
+                    {
+                        if (patchEntry->original != NULL)
+                            *patchEntry->original = func;
 
-                // Found the IAT entry. Overwrite the address stored in the IAT
-                // entry with the address of the replacement. Note that the IAT
-                // entry may be write-protected, so we must first ensure that it is
-                // writable.
-                if ( import != replacement )
+                        DWORD protect;
+                        if (VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), PAGE_EXECUTE_READWRITE, &protect)) {
+                            thunk->u1.Function = (DWORD_PTR)replacement;
+                            if (VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), protect, &protect)) {
+#ifdef PRINTHOOKINFO
+                                if (!IS_ORDINAL(importname)) {
+                                    DbgReport(L"Hook dll \"%S\" import %S!%S()\n",
+                                        strrchr(pszBuffer, '\\') + 1, patchModule->exportModuleName, importname);
+                                } else {
+                                    DbgReport(L"Hook dll \"%S\" import %S!%zu()\n",
+                                        strrchr(pszBuffer, '\\') + 1, patchModule->exportModuleName, importname);
+                                }
+#endif
+                            }
+                        }
+                    }
+                    // The patch has been installed in the import module.
+                    result++;
+                    break;
+                }
+#ifdef PRINTHOOKINFO
+                PIMAGE_IMPORT_BY_NAME funcEntry = (PIMAGE_IMPORT_BY_NAME)
+                    R2VA(importmodule, origThunk->u1.AddressOfData);
+                if (stricmp(importdllname, patchModule->exportModuleName) == 0)
                 {
-                    if (entry->original != NULL)
-                        *entry->original = (LPVOID)iate->u1.Function;
-
-                    DWORD protect;
-                    VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), PAGE_EXECUTE_READWRITE, &protect);
-                    iate->u1.Function = (DWORD_PTR)replacement;
-                    VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), protect, &protect);
+                    if (!(origThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) && !IS_ORDINAL(importname) &&
+                        strcmp(reinterpret_cast<const char*>(funcEntry->Name), importname) == 0)
+                    {
+                        if (!dllNamePrinted)
+                        {
+                            dllNamePrinted = true;
+                            DbgReport(L"Hook dll \"%S\":\n",
+                                strrchr(pszBuffer, '\\') + 1);
+                        }
+                        DbgReport(L"Import found %S(\"%S\") for dll \"%S\".\n",
+                            importname, patchModule->exportModuleName, importdllname);
+                        break;
+                    }
+                    if ((origThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) && IS_ORDINAL(importname) &&
+                        (IMAGE_ORDINAL(origThunk->u1.Ordinal) == (UINT_PTR)importname))
+                    {
+                        if (!dllNamePrinted)
+                        {
+                            dllNamePrinted = true;
+                            DbgReport(L"Hook dll \"%S\":\n",
+                                strrchr(pszBuffer, '\\') + 1);
+                        }
+                        DbgReport(L"Import found %zu(\"%S\") for dll \"%S\".\n",
+                            importname, patchModule->exportModuleName, importdllname);
+                        break;
+                    }
                 }
-                // The patch has been installed in the import module.
-                result++;
-                iate++;
+#endif
             }
-            entry++; i++;
+            patchEntry++; i++;
         }
 
         idte++;
@@ -574,12 +651,19 @@ BOOL PatchModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tables
     UINT          index;
     BOOL          patched = FALSE;
 
+#ifdef PRINTHOOKINFO
+    CHAR  cwBuffer[2048] = { 0 };
+    LPSTR pszBuffer = cwBuffer;
+    DWORD dwMaxChars = _countof(cwBuffer);
+    DWORD dwLength = ::GetModuleFileNameA(importmodule, pszBuffer, dwMaxChars);
+#endif
+
     // Loop through the import patch table, individually patching each import
     // listed in the table.
     DbgTrace(L"dbghelp32.dll %i: PatchModule - ImageDirectoryEntryToDataEx\n", GetCurrentThreadId());
     for (index = 0; index < tablesize; index++) {
         entry = &patchtable[index];
-        if (PatchImport(importmodule, entry) == TRUE) {
+        if (PatchImport(importmodule, entry)) {
             patched = TRUE;
         }
     }
@@ -630,14 +714,15 @@ VOID Print (LPWSTR messagew)
                 fputws(messagew, stdout);
         }
         else {
+            const size_t MAXMESSAGELENGTH = 5119;
             size_t  count = 0;
-            CHAR    messagea [MAXREPORTLENGTH + 1];
-            if (wcstombs_s(&count, messagea, MAXREPORTLENGTH + 1, messagew, _TRUNCATE) != 0) {
+            CHAR    messagea [MAXMESSAGELENGTH + 1];
+            if (wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE) != 0) {
                 // Failed to convert the Unicode message to ASCII.
                 assert(FALSE);
                 return;
             }
-            messagea[MAXREPORTLENGTH] = '\0';
+            messagea[MAXMESSAGELENGTH] = '\0';
 
             if (s_reportFile != NULL) {
                 // Send the report to the previously specified file.
@@ -654,7 +739,7 @@ VOID Print (LPWSTR messagew)
     else if (hook_retval == 1)
         __debugbreak();
 
-    if (s_reportToDebugger && (s_reportDelay == TRUE)) {
+    if (s_reportToDebugger && (s_reportDelay)) {
         Sleep(10); // Workaround the Visual Studio 6 bug where debug strings are sometimes lost if they're sent too fast.
     }
 }
@@ -719,29 +804,31 @@ VOID RestoreImport (HMODULE importmodule, moduleentry_t* module)
     if (exportmodule == NULL)
         return;
 
-    IMAGE_IMPORT_DESCRIPTOR *idte;
-    IMAGE_SECTION_HEADER    *section;
-    ULONG                    size;
+    IMAGE_IMPORT_DESCRIPTOR *idte = NULL;
+    IMAGE_SECTION_HEADER    *section = NULL;
+    ULONG                    size = 0;
 
     // Locate the importing module's Import Directory Table (IDT) entry for the
     // exporting module. The importing module actually can have several IATs --
     // one for each export module that it imports something from. The IDT entry
     // gives us the offset of the IAT for the module we are interested in.
-    g_imageLock.Enter();
-    __try
     {
-        idte = (IMAGE_IMPORT_DESCRIPTOR*)ImageDirectoryEntryToDataEx((PVOID)importmodule, TRUE,
+        idte = (IMAGE_IMPORT_DESCRIPTOR*)g_Ide.ImageDirectoryEntryToDataEx((PVOID)GetCallingModule((UINT_PTR)importmodule), TRUE,
             IMAGE_DIRECTORY_ENTRY_IMPORT, &size, &section);
     }
-    __except(FilterFunction(GetExceptionCode()))
-    {
-        idte = NULL;
-    }
-    g_imageLock.Leave();
+
     if (idte == NULL) {
         // This module has no IDT (i.e. it imports nothing).
         return;
     }
+
+#ifdef PRINTHOOKINFO
+    bool dllNamePrinted = false;
+    CHAR  cwBuffer[2048] = { 0 };
+    LPSTR pszBuffer = cwBuffer;
+    DWORD dwMaxChars = _countof(cwBuffer);
+    DWORD dwLength = ::GetModuleFileNameA(importmodule, pszBuffer, dwMaxChars);
+#endif
 
     int result = 0;
     while (idte->OriginalFirstThunk != 0x0)
@@ -759,7 +846,7 @@ VOID RestoreImport (HMODULE importmodule, moduleentry_t* module)
 
             // Get the *real* address of the import.
             //LPCVOID original = entry->original;
-            LPCVOID original = GetProcAddress(exportmodule, importname);
+            LPCVOID original = g_vld._RGetProcAddress(exportmodule, importname);
             if (original == NULL) // Perhaps the named export module does not actually export the named import?
             {
                 entry++; i++;
@@ -783,9 +870,20 @@ VOID RestoreImport (HMODULE importmodule, moduleentry_t* module)
                     // entry with the import's real address. Note that the IAT entry may
                     // be write-protected, so we must first ensure that it is writable.
                     DWORD protect;
-                    VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), PAGE_EXECUTE_READWRITE, &protect);
-                    iate->u1.Function = (DWORD_PTR)original;
-                    VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), protect, &protect);
+                    if (VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), PAGE_EXECUTE_READWRITE, &protect)) {
+                        iate->u1.Function = (DWORD_PTR)original;
+                        if (VirtualProtect(&iate->u1.Function, sizeof(iate->u1.Function), protect, &protect)) {
+#ifdef PRINTHOOKINFO
+                            if (!IS_ORDINAL(importname)) {
+                                DbgReport(L"UnHook dll \"%S\" import %S!%S()\n",
+                                    strrchr(pszBuffer, '\\') + 1, module->exportModuleName, importname);
+                            } else {
+                                DbgReport(L"UnHook dll \"%S\" import %S!%zu()\n",
+                                    strrchr(pszBuffer, '\\') + 1, module->exportModuleName, importname);
+                            }
+#endif
+                        }
+                    }
                 }
                 result++;
                 iate++;
@@ -886,7 +984,7 @@ VOID SetReportFile (FILE *file, BOOL copydebugger, BOOL tostdout)
 //
 //  Return Value:
 //
-//    The new concatenated string. 
+//    The new concatenated string.
 //
 LPWSTR AppendString (LPWSTR dest, LPCWSTR source)
 {
@@ -1031,7 +1129,7 @@ static const DWORD crctab[256] = {
 };
 
 DWORD CalculateCRC32(UINT_PTR p, UINT startValue)
-{      
+{
     register DWORD hash = startValue;
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  0) & 0xff)];
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  8) & 0xff)];
@@ -1079,8 +1177,91 @@ HMODULE GetCallingModule( UINT_PTR pCaller )
     MEMORY_BASIC_INFORMATION mbi;
     if ( VirtualQuery((LPCVOID)pCaller, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == sizeof(MEMORY_BASIC_INFORMATION) )
     {
-        // the allocation base is the beginning of a PE file 
+        // the allocation base is the beginning of a PE file
         hModule = (HMODULE) mbi.AllocationBase;
     }
     return hModule;
+}
+
+// LoadBoolOption - Loads specified option from environment variables or from specified ini file,
+//   if env var is unavailable and converts string values (e.g. "yes", "no", "on", "off") to boolean values.
+//
+//  - optionname (IN): Option to load.
+//
+//  - defaultvalue (IN): Default value if optionname in unavailable.
+//
+//  - inipath (IN): Path to configuration ini file.
+//
+//  Return Value:
+//
+//    Returns TRUE if the string is recognized as a "true" string. Otherwise
+//    returns FALSE.
+//
+BOOL LoadBoolOption(LPCWSTR optionname, LPCWSTR defaultvalue, LPCWSTR inipath)
+{
+    const UINT buffersize = 64;
+    WCHAR buffer[buffersize] = { 0 };
+
+    WCHAR envirinmentoptionname[buffersize] = L"Vld";
+    wcscat_s(envirinmentoptionname, buffersize, optionname);
+
+    if (!GetEnvironmentVariable(envirinmentoptionname, buffer, buffersize)) {
+        GetPrivateProfileString(L"Options", optionname, defaultvalue, buffer, buffersize, inipath);
+    }
+
+    return StrToBool(buffer);
+}
+
+// LoadIntOption - Loads specified option from environment variables or from specified ini file,
+//   if env var is unavailable.
+//
+//  - optionname (IN): Option to load
+//
+//  - defaultvalue (IN): Default value if optionname in unavailable.
+//
+//  - inipath (IN): Path to configuration ini file.
+//
+//  Return Value:
+//
+//    Returns integer representation of optionname's value.
+//
+UINT LoadIntOption(LPCWSTR optionname, UINT defaultvalue, LPCWSTR inipath)
+{
+    const UINT buffersize = 64;
+    WCHAR buffer[buffersize] = { 0 };
+
+    WCHAR envirinmentoptionname[buffersize] = L"Vld";
+    wcscat_s(envirinmentoptionname, buffersize, optionname);
+
+    if (!GetEnvironmentVariable(envirinmentoptionname, buffer, buffersize)) {
+        return GetPrivateProfileInt(L"Options", optionname, defaultvalue, inipath);
+    }
+
+    return _tstoi(buffer);
+}
+
+// LoadStringOption - Loads specified option from environment variables or from specified ini file,
+//   if env var is unavailable.
+//
+//  - optionname (IN): Option to load.
+//
+//  - outputbuffer (OUT): A buffer to store the string.
+//
+//  - buffersize (IN): Size of a buffer in characters.
+//
+//  - inipath (IN): Path to configuration ini file.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID LoadStringOption(LPCWSTR optionname, LPWSTR outputbuffer, UINT buffersize, LPCWSTR inipath)
+{
+    const UINT namebuffersize = 64;
+    WCHAR envirinmentoptionname[namebuffersize] = L"Vld";
+    wcscat_s(envirinmentoptionname, namebuffersize, optionname);
+
+    if (!GetEnvironmentVariable(envirinmentoptionname, outputbuffer, buffersize)) {
+        GetPrivateProfileString(L"Options", optionname, L"", outputbuffer, buffersize, inipath);
+    }
 }

@@ -156,7 +156,6 @@ int skynet_main(int argc, char *argv[])
 
 	SNServer snserver(config.harbor, config.module_path);
 	skynet_start(snserver, &config);
-
 	LogRaw("\n\n=========== Skynet Exit ===========\n\n");
 	return 0;
 }
