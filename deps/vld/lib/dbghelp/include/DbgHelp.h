@@ -1265,7 +1265,7 @@ typedef struct _IMAGEHLP_MODULE64 {
     BOOL     TypeInfo;               // we have type information
     // new elements: 17-Dec-2003
     BOOL     SourceIndexed;          // pdb supports source server
-    BOOL     Publics;                // contains public symbols
+    BOOL     Publics;                // contains public symbols 
 } IMAGEHLP_MODULE64, *PIMAGEHLP_MODULE64;
 
 typedef struct _IMAGEHLP_MODULEW64 {

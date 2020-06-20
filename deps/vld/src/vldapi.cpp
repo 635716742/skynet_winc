@@ -142,9 +142,15 @@ __declspec(dllexport) void VLDSetReportOptions(UINT option_mask, CONST WCHAR *fi
     g_vld.SetReportOptions(option_mask,filename);
 }
 
-__declspec(dllexport) void VLDResolveCallstacks()
+__declspec(dllexport) int VLDResolveCallstacks()
 {
-    g_vld.ResolveCallstacks();
+    return g_vld.ResolveCallstacks();
+}
+
+/// Internal function for tests. Not safe to use because Vld own returned string
+__declspec(dllexport) const wchar_t* VldInternalGetAllocationCallstack(void* alloc, BOOL showInternalFrames)
+{
+    return g_vld.GetAllocationResolveResults(alloc, showInternalFrames);
 }
 
 }

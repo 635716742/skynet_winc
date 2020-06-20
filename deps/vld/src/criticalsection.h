@@ -4,29 +4,37 @@
 #define NOMINMAX
 #include <windows.h>
 
-// you should consider CriticalSectionLocker whenever possible instead of
+// you should consider CriticalSectionLocker<> whenever possible instead of
 // directly working with CriticalSection class - it is safer
 class CriticalSection
 {
 public:
-	void Initialize() 	{ m_critRegion.OwningThread = 0; InitializeCriticalSection(&m_critRegion); }
-	void Delete() 	  	{ DeleteCriticalSection(&m_critRegion); }
+	void Initialize()
+	{
+		m_critRegion.OwningThread = 0;
+		__try {
+			InitializeCriticalSection(&m_critRegion);
+		} __except (GetExceptionCode() == STATUS_NO_MEMORY ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			assert(FALSE);
+		}
+	}
+	void Delete()		{ DeleteCriticalSection(&m_critRegion); }
 
 	// enter the section
-	void Enter() 	  	
-	{ 
+	void Enter()
+	{
 		ULONG_PTR ownerThreadId = (ULONG_PTR)m_critRegion.OwningThread;
 		UNREFERENCED_PARAMETER(ownerThreadId);
 		EnterCriticalSection(&m_critRegion);
 	}
 
-	bool IsLocked() 	  	
-	{ 
+	bool IsLocked()
+	{
 		return (m_critRegion.OwningThread != NULL);
 	}
 
-	bool IsLockedByCurrentThread() 	  	
-	{ 
+	bool IsLockedByCurrentThread()
+	{
 		if (m_critRegion.OwningThread == NULL)
 			return false;
 		HANDLE ownerThreadId = (HANDLE)GetCurrentThreadId();
@@ -34,19 +42,20 @@ public:
 	}
 
 	// try enter the section
-	bool TryEnter()   	{ return (TryEnterCriticalSection(&m_critRegion) != 0); }
+	bool TryEnter()		{ return (TryEnterCriticalSection(&m_critRegion) != 0); }
 
 	// leave the critical section
-	void Leave() 	  	{ LeaveCriticalSection(&m_critRegion); }
+	void Leave()		{ LeaveCriticalSection(&m_critRegion); }
 
 private:
 	CRITICAL_SECTION m_critRegion;
 };
 
+template<typename T = CriticalSection>
 class CriticalSectionLocker
 {
 public:
-	CriticalSectionLocker(CriticalSection& cs)
+	CriticalSectionLocker(T& cs)
 		: m_leave(false)
 		, m_critSect(cs)
 	{
@@ -62,9 +71,9 @@ public:
 	{
 		LeaveLock();
 	}
-	
-private:	
-	void LeaveLock() 
+
+private:
+	void LeaveLock()
 	{
 		if (!m_leave)
 		{
@@ -73,7 +82,8 @@ private:
 		}
 	}
 	CriticalSectionLocker(); // not allowed
+	CriticalSectionLocker( const CriticalSectionLocker & ); // not allowed
 	CriticalSectionLocker & operator=( const CriticalSectionLocker & ); // not allowed
 	bool m_leave;
-	CriticalSection& m_critSect;
+    T& m_critSect;
 };

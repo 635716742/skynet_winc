@@ -355,7 +355,6 @@ Global
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Debug|Mixed Platforms.ActiveCfg = Debug|Win32
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Debug|Mixed Platforms.Build.0 = Debug|Win32
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Debug|Win32.ActiveCfg = Debug|Win32
-		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Debug|Win32.Build.0 = Debug|Win32
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Release|Any CPU.ActiveCfg = Release|Win32
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Release|Mixed Platforms.ActiveCfg = Release|Win32
 		{05EABD9F-233E-4B4D-ABC9-504142F94A1E}.Release|Mixed Platforms.Build.0 = Release|Win32

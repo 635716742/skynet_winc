@@ -12,6 +12,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\deps\vld\src\callstack.cpp" />
+    <ClCompile Include="..\..\deps\vld\src\cppformat\format.cc" />
+    <ClCompile Include="..\..\deps\vld\src\cppformat\posix.cc" />
     <ClCompile Include="..\..\deps\vld\src\dllspatches.cpp" />
     <ClCompile Include="..\..\deps\vld\src\ntapi.cpp" />
     <ClCompile Include="..\..\deps\vld\src\stdafx.cpp" />
@@ -23,6 +25,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\deps\vld\src\callstack.h" />
+    <ClInclude Include="..\..\deps\vld\src\cppformat\format.h" />
+    <ClInclude Include="..\..\deps\vld\src\cppformat\posix.h" />
     <ClInclude Include="..\..\deps\vld\src\criticalsection.h" />
     <ClInclude Include="..\..\deps\vld\src\crtmfcpatch.h" />
     <ClInclude Include="..\..\deps\vld\src\map.h" />
@@ -99,7 +103,10 @@
       <AdditionalDependencies>psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(OutDir)$(TargetName).lib" "$(OutDir)vld.lib" /y</Command>
+      <Command>copy "$(OutDir)$(TargetName).lib" "$(OutDir)vld.lib" /y
+copy "..\..\deps\vld\vld.ini" "$(OutDir)vld.ini" /y
+copy "..\..\deps\vld\lib\dbghelp\lib\x86\*" "$(OutDir)" /y
+copy "..\..\deps\vld\lib\dbghelp\lib\x64\*" "$(OutDir)" /y</Command>
     </PostBuildEvent>
     <Bscmake>
       <PreserveSbr>true</PreserveSbr>
