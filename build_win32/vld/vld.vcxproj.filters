@@ -38,6 +38,12 @@
     <ClCompile Include="..\..\deps\vld\src\vldheap.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\deps\vld\src\cppformat\format.cc">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\deps\vld\src\cppformat\posix.cc">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\deps\vld\src\callstack.h">
@@ -83,6 +89,12 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="..\..\deps\vld\src\vldint.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\deps\vld\src\cppformat\format.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\deps\vld\src\cppformat\posix.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

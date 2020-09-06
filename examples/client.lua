@@ -1,5 +1,5 @@
 package.cpath = "./luaclib/?.dll;"
-package.path = "../../../lualib/?.lua;../../../examples/?.lua"
+package.path = "../lualib/?.lua;../examples/?.lua"
 
 if _VERSION ~= "Lua 5.3" then
 	error "Use lua 5.3"
